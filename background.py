@@ -14,8 +14,11 @@ from typing import Dict, List, Optional, Tuple
 
 
 # 轨标题行：1. タイトル [01:17]  /  1．タイトル（01:17）  /  1、タイトル
+#   支持时长后方同行标签：1. タイトル [01:17]タグ
 _TRACK_HEADER = re.compile(
-    r"^(\d+)\s*[.．、]\s*(.+?)(?:\s*[\[（(](\d{1,2}:\d{2}(?::\d{2})?)[\]）)])?\s*$"
+    r"^(\d+)\s*[.．、]\s*(.+?)"
+    r"(?:\s*[\[（(](\d{1,2}:\d{2}(?::\d{2})?)[\]）)]\s*(.*))?"
+    r"\s*$"
 )
 
 # 文件名中的轨号：01_xxx / 1.xxx / track02 / trk-3
@@ -198,6 +201,8 @@ class AudioBackground:
             2．タイトル（36:52）
             タグ
 
+            3. タイトル [01:17]タグ    # 时长后同行标签
+
         Returns:
             [{"index", "title", "duration", "tags", "description"}, ...]
         """
@@ -205,7 +210,8 @@ class AudioBackground:
             return []
 
         lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        headers: List[Tuple[int, int, str, str]] = []  # (line_idx, track_no, title, duration)
+        # (line_idx, track_no, title, duration, inline_tags)
+        headers: List[Tuple[int, int, str, str, str]] = []
 
         for i, line in enumerate(lines):
             m = _TRACK_HEADER.match(line.strip())
@@ -214,15 +220,19 @@ class AudioBackground:
             track_no = int(m.group(1))
             title = m.group(2).strip()
             duration = (m.group(3) or "").strip()
-            headers.append((i, track_no, title, duration))
+            inline_tags = (m.group(4) or "").strip()
+            headers.append((i, track_no, title, duration, inline_tags))
 
         if not headers:
             return []
 
         tracks: List[dict] = []
-        for h_i, (line_idx, track_no, title, duration) in enumerate(headers):
+        for h_i, (line_idx, track_no, title, duration, inline_tags) in enumerate(headers):
             end = headers[h_i + 1][0] if h_i + 1 < len(headers) else len(lines)
             tag_lines = []
+            # 行内标签（时长方括号后的同行文字）优先
+            if inline_tags:
+                tag_lines.append(inline_tags)
             for raw in lines[line_idx + 1 : end]:
                 s = raw.strip()
                 if s:
