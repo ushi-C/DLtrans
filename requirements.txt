@@ -1,0 +1,11 @@
+# ASR
+faster-whisper
+
+# OpenAI
+openai
+
+# API 重试
+tenacity
+
+# GPU 推理
+torch
