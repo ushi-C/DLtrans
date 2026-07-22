@@ -5,10 +5,15 @@ import re
 
 
 def time_to_seconds(t):
-    """将时间字符串或数值统一转换为秒（float）。"""
+    """将时间字符串或数值统一转换为秒（float）。
+
+    兼容 SRT 时间戳格式（逗号分隔毫秒，如 00:00:03,120）。
+    """
     if isinstance(t, (int, float)):
         return float(t)
-    parts = str(t).strip().split(":")
+    # SRT 使用逗号分隔毫秒，统一替换为小数点
+    t = str(t).strip().replace(",", ".")
+    parts = t.split(":")
     try:
         if len(parts) == 3:
             return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])

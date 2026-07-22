@@ -1,6 +1,9 @@
 # ASR
 faster-whisper
 
+# 进度条
+tqdm
+
 # OpenAI
 openai
 

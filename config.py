@@ -17,6 +17,11 @@ RETRY_MAX_ATTEMPTS = 3     # API 失败重试次数
 
 WHISPER_MODEL_SIZE = "large-v3"
 
+# ----- mode -----
+# "direct"     = 直接识别（Whisper 自行分句，适用于无参考 SRT 的场景）
+# "srt_preset" = 预设轴模式（以参考 SRT 时间轴切片后逐段识别，保留原始轴）
+ASR_MODE = "srt_preset"
+
 # ----- device -----
 ASR_DEVICE = "cuda"
 ASR_COMPUTE_TYPE = "float16"
@@ -45,6 +50,11 @@ VAD_PARAMS = {
     "min_silence_duration_ms": 800,
     "speech_pad_ms": 200,
 }
+
+# ----- SRT 预设轴模式专用 -----
+ASR_TEMP_DIR = "_asr_clips"          # 音频切片临时目录
+ASR_MIN_CLIP_DURATION = 0.3          # 最小切片时长（秒），低于此值跳过识别
+ASR_FALLBACK_TO_ORIGINAL = True      # ASR 识别为空时，回退到参考 SRT 原文
 
 # ==========================================
 # 校对 & 翻译配置
