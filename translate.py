@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from openai import OpenAI
 
-from api_client import call_llm_api
+from api_client import call_llm_api, LLMCallError
 from utils import extract_mapping
 from config import (
     MAX_WORKERS,
@@ -58,14 +58,21 @@ def _translate_worker(
                         {"role": "user", "content": f"只输出中文译文，不要任何其他内容：{txt}"},
                     ])
                     mapping[sid] = single.strip()
-                except Exception:
+                except LLMCallError as e:
+                    print(f"      ❌ [{sid}] 翻译失败（{e.attempts}次）: {e.reason}")
                     mapping[sid] = txt  # 保留日语原文
+                except Exception as e:
+                    print(f"      ❌ [{sid}] 未知错误: {e}")
+                    mapping[sid] = txt
 
         return mapping
 
-    except Exception as e:
-        print(f"   ❌ chunk {idx}/{total} 整体失败: {e}，保留原文")
+    except LLMCallError as e:
+        print(f"   ❌ chunk {idx}/{total} 整体失败（{e.attempts}次）: {e.reason}")
         return {sid: txt for sid, txt in chunk}  # 整体失败时保留原文，不返回空字典
+    except Exception as e:
+        print(f"   ❌ chunk {idx}/{total} 未知错误: {e}，保留原文")
+        return {sid: txt for sid, txt in chunk}
 
 
 def run_parallel_translation(

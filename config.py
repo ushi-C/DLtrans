@@ -4,12 +4,14 @@
 # 参数前置原则：所有可调参数集中在此文件，其他模块仅引用不定义。
 
 # --- API 配置 ---
-OPENAI_BASE_URL = "https://api.n1n.ai/v1/chat/completions"
+OPENAI_BASE_URL = "https://api.n1n.ai/v1"
 MODEL_NAME = "gemini-2.5-pro"
 
 # --- 并发与重试 ---
 MAX_WORKERS = 4            # 并发翻译线程数
-RETRY_MAX_ATTEMPTS = 3     # API 失败重试次数
+RETRY_MAX_ATTEMPTS = 4     # API 失败重试次数
+RETRY_WAIT_MIN = 4         # 重试最小等待秒数（指数退避基数）
+RETRY_WAIT_MAX = 30        # 重试最大等待秒数
 
 # ==========================================
 # ASR 配置

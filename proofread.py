@@ -7,7 +7,7 @@ from typing import List
 
 from openai import OpenAI
 
-from api_client import call_llm_api
+from api_client import call_llm_api, LLMCallError
 from utils import extract_mapping
 from config import (
     PROOFREAD_BATCH_SIZE,
@@ -55,6 +55,7 @@ def run_smart_proofread(
             {"role": "user", "content": PROOFREAD_USER_TEMPLATE.format(asr_text=asr_in)},
         ]
 
+        batch_num = i // PROOFREAD_BATCH_SIZE + 1
         try:
             content = call_llm_api(client, messages)
             mapping = extract_mapping(content)
@@ -64,7 +65,12 @@ def run_smart_proofread(
                 if res_text != s["text"]:
                     matched_count += 1
                 final.append({"start": s["start"], "end": s["end"], "ja": res_text})
-        except Exception:
+        except LLMCallError as e:
+            print(f"   ⚠️ 批次 {batch_num} 校对失败（{e.attempts}次）: {e.reason}，该批保留原文")
+            for s in batch:
+                final.append({"start": s["start"], "end": s["end"], "ja": s["text"]})
+        except Exception as e:
+            print(f"   ⚠️ 批次 {batch_num} 未知错误: {e}，该批保留原文")
             for s in batch:
                 final.append({"start": s["start"], "end": s["end"], "ja": s["text"]})
 
