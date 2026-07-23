@@ -28,6 +28,12 @@ _FILE_TRACK_NUM = re.compile(
 )
 _FILE_LEADING_NUM = re.compile(r"^(\d{1,3})")
 
+# グローバル解析用：テキスト全体からトラックヘッダー開始位置を検出
+# 行頭・改行後・空白後に続く "数字 + 区切り記号(. ． 、) + 非空白非数字" をマッチ
+_GLOBAL_TRACK_START = re.compile(
+    r"(?:^|\n|\s)(\d+)\s*[.．、]\s*(?=[^\s\d])"
+)
+
 
 class AudioBackground:
     """DLsite 音声作品的背景信息。
@@ -253,6 +259,90 @@ class AudioBackground:
             )
 
         tracks.sort(key=lambda t: t["index"])
+
+        # フォールバック：1 軨以下しか解析できなかった場合、グローバル分割を試行
+        # （Colab の input() で複数行ペーストが 1 行に潰れた場合などの対策）
+        if len(tracks) <= 1:
+            global_tracks = AudioBackground._parse_tracklist_global(text)
+            if len(global_tracks) > len(tracks):
+                return global_tracks
+
+        return tracks
+
+    @staticmethod
+    def _parse_tracklist_global(text: str) -> List[dict]:
+        """グローバル分割によるトラックリスト解析（フォールバック）。
+
+        テキスト全体を走査してトラックヘッダー出現位置で分割し、
+        各セグメントを個別に解析する。以下の場合に有効：
+        - 全トラックが 1 行に連結されている
+        - Colab の input() で改行が失われた
+        - 行ごとの正規マッチで取りこぼしがあった
+        """
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        matches = list(_GLOBAL_TRACK_START.finditer(text))
+        if len(matches) <= 1:
+            return []
+
+        segments: List[str] = []
+        for i, m in enumerate(matches):
+            start = m.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            seg = text[start:end].strip()
+            if seg:
+                segments.append(seg)
+
+        tracks: List[dict] = []
+        for seg in segments:
+            seg_lines = seg.split("\n")
+            first_line = seg_lines[0].strip()
+
+            # まず _TRACK_HEADER で解析を試みる
+            m = _TRACK_HEADER.match(first_line)
+            if m:
+                track_no = int(m.group(1))
+                title = m.group(2).strip()
+                duration = (m.group(3) or "").strip()
+                inline_tags = (m.group(4) or "").strip()
+            else:
+                # 手動解析：番号 + 区切り + 残り
+                m2 = re.match(r"(\d+)\s*[.．、]\s*(.+)", first_line)
+                if not m2:
+                    continue
+                track_no = int(m2.group(1))
+                rest = m2.group(2).strip()
+                dur_match = re.search(r"[\[（(](\d{1,2}:\d{2}(?::\d{2})?)[\]）)]", rest)
+                if dur_match:
+                    duration = dur_match.group(1)
+                    title = rest[: dur_match.start()].strip()
+                    inline_tags = rest[dur_match.end() :].strip()
+                else:
+                    title = rest
+                    duration = ""
+                    inline_tags = ""
+
+            tag_lines: List[str] = []
+            if inline_tags:
+                tag_lines.append(inline_tags)
+            for raw in seg_lines[1:]:
+                s = raw.strip()
+                if s:
+                    tag_lines.append(s)
+            tags = " ".join(tag_lines)
+
+            description = f"{title} / {tags}" if tags else title
+            tracks.append(
+                {
+                    "index": track_no,
+                    "title": title,
+                    "duration": duration,
+                    "tags": tags,
+                    "description": description,
+                }
+            )
+
+        tracks.sort(key=lambda t: t["index"])
         return tracks
 
     @staticmethod
@@ -263,8 +353,9 @@ class AudioBackground:
         """将解析出的轨描述对齐到音频文件名。
 
         优先级：
-          1. 文件名中的轨号 ↔ リスト序号
-          2. 数量相等时按文件名自然序与轨序号一一对应
+          1. 文件名轨号 ↔ リスト序号（重叠率高时）
+          2. 数量相等且轨号偏移 → 按文件名自然序一一对应
+          3. 剩余文件按自然序 ↔ 剩余轨
 
         Returns:
             (mapping, warnings)
@@ -277,7 +368,7 @@ class AudioBackground:
         mapping: Dict[str, str] = {}
         used_indices = set()
 
-        # Pass 1: 文件名轨号匹配
+        # ファイル名から轨号を抽出
         numbered: List[Tuple[str, int]] = []
         unnumbered: List[str] = []
         for fname in filenames:
@@ -287,35 +378,75 @@ class AudioBackground:
             else:
                 unnumbered.append(fname)
 
-        for fname, num in numbered:
-            track = by_index.get(num)
-            if track:
+        # ── 轨号偏移検出 ──
+        # 数量が一致し、番号の重複率が低い場合は番号マッチングをスキップし、
+        # ファイル並び順 ↔ 轨並び順で一一対応させる。
+        # 例: ファイル 4~8 / リスト 1~5 → 順序で対齐
+        file_nums = sorted(n for _, n in numbered)
+        track_nums = sorted(t["index"] for t in tracks)
+
+        def _is_contiguous(seq: List[int]) -> bool:
+            return len(seq) > 0 and seq == list(range(seq[0], seq[0] + len(seq)))
+
+        use_sequential = False
+        if len(tracks) == len(filenames) and len(numbered) == len(filenames):
+            file_contig = _is_contiguous(file_nums)
+            track_contig = _is_contiguous(track_nums)
+            if file_contig and track_contig and file_nums != track_nums:
+                # 両方連番で起点が異なる → 確実な偏移
+                use_sequential = True
+            elif file_nums != track_nums:
+                # 非連番の場合は重複率で判定
+                overlap = set(file_nums) & set(track_nums)
+                overlap_rate = len(overlap) / len(file_nums) if file_nums else 1.0
+                if overlap_rate < 0.5:
+                    use_sequential = True
+
+        if use_sequential:
+            sorted_files = AudioBackground._natural_sort(filenames)
+            for fname, track in zip(sorted_files, tracks):
                 mapping[fname] = track["description"]
-                used_indices.add(num)
-            else:
-                warnings.append(f"{fname}: 文件名轨号 {num} 在リスト中不存在")
-
-        # Pass 2: 剩余文件按自然序 ↔ 剩余轨
-        remaining_files = [f for f in AudioBackground._natural_sort(filenames) if f not in mapping]
-        remaining_tracks = [t for t in tracks if t["index"] not in used_indices]
-
-        if remaining_files and remaining_tracks:
-            if len(remaining_files) == len(remaining_tracks):
-                for fname, track in zip(remaining_files, remaining_tracks):
-                    mapping[fname] = track["description"]
-                    used_indices.add(track["index"])
-                if unnumbered or (numbered and remaining_files):
-                    warnings.append("部分文件按排序顺序与剩余轨一一对应")
-            else:
-                n = min(len(remaining_files), len(remaining_tracks))
-                for fname, track in zip(remaining_files[:n], remaining_tracks[:n]):
-                    mapping[fname] = track["description"]
-                    used_indices.add(track["index"])
+                used_indices.add(track["index"])
+            if file_nums and track_nums:
                 warnings.append(
-                    f"文件数与轨数不完全匹配"
-                    f"（剩余文件 {len(remaining_files)}，剩余轨 {len(remaining_tracks)}），"
-                    f"已按顺序对齐前 {n} 个"
+                    f"文件轨号与リスト序号存在偏移"
+                    f"（文件 {file_nums[0]}\u2013{file_nums[-1]} / "
+                    f"リスト {track_nums[0]}\u2013{track_nums[-1]}），"
+                    f"已按文件排序顺序一一对应"
                 )
+            else:
+                warnings.append("已按文件排序顺序对齐")
+        else:
+            # Pass 1: 文件名轨号匹配
+            for fname, num in numbered:
+                track = by_index.get(num)
+                if track:
+                    mapping[fname] = track["description"]
+                    used_indices.add(num)
+                else:
+                    warnings.append(f"{fname}: 文件名轨号 {num} 在リスト中不存在")
+
+            # Pass 2: 剩余文件按自然序 ↔ 剩余轨
+            remaining_files = [f for f in AudioBackground._natural_sort(filenames) if f not in mapping]
+            remaining_tracks = [t for t in tracks if t["index"] not in used_indices]
+
+            if remaining_files and remaining_tracks:
+                if len(remaining_files) == len(remaining_tracks):
+                    for fname, track in zip(remaining_files, remaining_tracks):
+                        mapping[fname] = track["description"]
+                        used_indices.add(track["index"])
+                    if unnumbered or (numbered and remaining_files):
+                        warnings.append("部分文件按排序顺序与剩余轨一一对应")
+                else:
+                    n = min(len(remaining_files), len(remaining_tracks))
+                    for fname, track in zip(remaining_files[:n], remaining_tracks[:n]):
+                        mapping[fname] = track["description"]
+                        used_indices.add(track["index"])
+                    warnings.append(
+                        f"文件数与轨数不完全匹配"
+                        f"（剩余文件 {len(remaining_files)}，剩余轨 {len(remaining_tracks)}），"
+                        f"已按顺序对齐前 {n} 个"
+                    )
 
         for fname in filenames:
             if fname not in mapping:
