@@ -1,6 +1,6 @@
-# DLsite 音声作品自动翻译
+#音声作品自动翻译
 
-DLsite 日语音声作品 → 中日双语 SRT 字幕。推荐在 Google Colab（CUDA / T4 GPU）运行。
+日语音声作品 → 中日双语 SRT 字幕。推荐在 Google Colab（CUDA / T4 GPU）运行。
 
 ```
 共享背景（标题 + 故事 + 角色）           ← 所有音频共用
@@ -248,9 +248,9 @@ background.track_descriptions = track_descs
 
 生成的 SRT 主要用于提高校对效率，不保证零人工修改。不懂日语请谨慎使用。
 
-1. 需要能访问 DLsite 的网络（获取作品与トラックリスト）。  
+1. 需要能访问 DLsite 的网络。  
 2. 需要 Google Colab 账号（有 Google 账号即可）。  
-3. 需要大语言模型 API，示例使用 [GPT_API_free](https://github.com/chatanywhere/GPT_API_free)。  
+3. 需要大语言模型 API，
    - Token 消耗受字幕条数与背景信息长度影响。  
    - 其他 API 请修改 `config.py` 中的 `OPENAI_BASE_URL`。  
 4. Colab 免费 GPU 时长有限，单轨超过约 2 小时请慎重。  
